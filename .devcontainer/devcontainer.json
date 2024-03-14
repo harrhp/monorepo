@@ -1,0 +1,9 @@
+{
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/harrhp/devcontainer-features/common:1": {}
+  },
+  "customizations": {
+    "vscode": {}
+  }
+}
