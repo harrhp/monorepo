@@ -13,7 +13,8 @@ jobs:
       IMAGES_PATH: ./images
     outputs:
       hasChanges: ${{ steps.detect-changes.outputs.changes != '[]' }}
-      images: ${{ steps.detect-changes.outputs.changes }}
+      changedImages: ${{ steps.detect-changes.outputs.changes }}
+      allImages: ${{ steps.get-all-images.outputs.folders }}
       imagesPath: ${{ env.IMAGES_PATH }}
       registry: ghcr.io
       tagPrefix: ${{ steps.split.outputs._2 }}
@@ -51,7 +52,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        imageShortName: ${{ fromJson(needs.get-vars.outputs.images) }}
+        imageShortName: ${{ fromJson(needs.get-vars.outputs.changedImages) }}
     permissions:
       contents: read
       packages: write
@@ -63,7 +64,7 @@ jobs:
       build: true
 
   call-publish-workflow:
-    if: ${{ needs.get-vars.outputs.tagPrefix == 'images' }}
+    if: ${{ needs.get-vars.outputs.tagPrefix == 'images' && contains(fromJson(needs.get-vars.outputs.allImages), needs.get-vars.outputs.publishImageShortName) }}
     needs: [get-vars]
     name: "[${{ needs.get-vars.outputs.publishImageShortName }}] publish image"
     permissions:
