@@ -1,0 +1,130 @@
+name: build and publish image
+
+on:
+  workflow_call:
+    inputs:
+      shortName:
+        description: image short name
+        required: true
+        type: string
+      context:
+        description: build context
+        required: false
+        type: string
+      registry:
+        description: registry
+        required: true
+        type: string
+      build:
+        description: build image
+        required: false
+        type: boolean
+        default: false
+      publish:
+        description: publish image
+        required: false
+        type: boolean
+        default: false
+      publishVersion:
+        description: publish image version
+        required: false
+        type: string
+
+jobs:
+  get-vars:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_WITHOUT_TAG: ${{ format('{0}/{1}/{2}', inputs.registry, github.repository_owner, inputs.shortName) }}
+    outputs:
+      imageWithoutTag: ${{ env.IMAGE_WITHOUT_TAG }}
+      imageWithTag: ${{ format('{0}:{1}', env.IMAGE_WITHOUT_TAG, github.sha) }}
+      imageNewTags: ${{ toJson(fromJson(steps.meta.outputs.json).tags) }}
+      tags: ${{ steps.meta.outputs.tags }}
+      labels: ${{ steps.meta.outputs.labels }}
+      annotations: ${{ steps.meta.outputs.annotations }}
+      json: ${{ steps.meta.outputs.json }}
+    steps:
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        env:
+          IS_RELEASE_VERSION: ${{ !!inputs.publishVersion && !contains(inputs.publishVersion, '-') }}
+        with:
+          images: |
+            ${{ env.IMAGE_WITHOUT_TAG }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ inputs.publishVersion }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.publishVersion }},enable=${{ env.IS_RELEASE_VERSION }}
+            type=semver,pattern={{major}},value=${{ inputs.publishVersion }},enable=${{ env.IS_RELEASE_VERSION }}
+            type=raw,value=latest,enable=${{ env.IS_RELEASE_VERSION }}
+            type=sha,prefix=,format=long,priority=2000
+            type=sha,prefix=
+            type=ref,event=branch
+            type=ref,event=branch,suffix=-{{sha}}
+            type=ref,event=pr
+            type=ref,event=pr,suffix=-{{sha}}
+            type=edge
+          labels: |
+            org.opencontainers.image.title=${{ inputs.shortName }}
+          annotations: |
+            manifest:org.opencontainers.image.title=${{ inputs.shortName }}
+          flavor: |
+            latest=false
+
+  build:
+    if: ${{ inputs.build }}
+    needs: [get-vars]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build and export to docker
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.context }}
+          load: true
+          tags: ${{ needs.get-vars.outputs.tags }}
+          labels: ${{ needs.get-vars.outputs.labels }}
+          annotations: ${{ needs.get-vars.outputs.annotations }}
+      - name: Test
+        run: |
+          docker run --rm ${{ fromJson(needs.get-vars.outputs.json).tags[0] }}
+      - name: Login to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push image
+        run: |
+          docker push --all-tags ${{ needs.get-vars.outputs.imageWithoutTag }}
+
+  publish:
+    if: ${{ inputs.publish }}
+    needs: [get-vars]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        imageNewTag: ${{ fromJson(needs.get-vars.outputs.imageNewTags) }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Login to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push image
+        run: |
+          docker pull ${{ needs.get-vars.outputs.imageWithTag }}
+          docker tag ${{ needs.get-vars.outputs.imageWithTag }} ${{ matrix.imageNewTag }}
+          docker push ${{ matrix.imageNewTag }}

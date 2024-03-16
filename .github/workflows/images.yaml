@@ -1,0 +1,78 @@
+name: images
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  get-vars:
+    if: ${{ github.event_name != 'push' || github.ref_type != 'branch' || github.ref_name == github.event.repository.default_branch }}
+    runs-on: ubuntu-latest
+    env:
+      IMAGES_PATH: ./images
+    outputs:
+      hasChanges: ${{ steps.detect-changes.outputs.changes != '[]' }}
+      changedImages: ${{ steps.detect-changes.outputs.changes }}
+      allImages: ${{ steps.get-all-images.outputs.folders }}
+      imagesPath: ${{ env.IMAGES_PATH }}
+      registry: ghcr.io
+      tagPrefix: ${{ steps.split.outputs._2 }}
+      publishImageShortName: ${{ steps.split.outputs._3 }}
+      publishImageVersion: ${{ steps.split.outputs._4 }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - id: get-all-images
+        name: Get image names
+        uses: ./.github/actions/list-folders
+        with:
+          path: ${{ env.IMAGES_PATH }}
+      - id: prepare-filters
+        name: Prepare filters
+        run: |
+          filters=$(echo '${{ steps.get-all-images.outputs.folders }}' | jq -c 'INDEX(.) | map_values(["\(env.IMAGES_PATH)/\(.)/**" ])')
+          echo $filters
+          echo "filters=$filters" >> "$GITHUB_OUTPUT"
+      - uses: dorny/paths-filter@v3
+        id: detect-changes
+        with:
+          filters: ${{ steps.prepare-filters.outputs.filters }}
+      - uses: winterjung/split@v2
+        id: split
+        if: ${{ github.ref_type == 'tag' }}
+        with:
+          msg: ${{ github.ref }}
+          separator: /
+
+  call-build-workflow:
+    if: ${{ github.ref_type != 'tag' && needs.get-vars.outputs.hasChanges }}
+    needs: [get-vars]
+    name: "[${{ matrix.imageShortName }}] build image"
+    strategy:
+      fail-fast: false
+      matrix:
+        imageShortName: ${{ fromJson(needs.get-vars.outputs.changedImages) }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/image-build-publish.yaml
+    with:
+      registry: ${{ needs.get-vars.outputs.registry }}
+      shortName: ${{ matrix.imageShortName }}
+      context: ${{ needs.get-vars.outputs.imagesPath }}/${{ matrix.imageShortName }}/src
+      build: true
+
+  call-publish-workflow:
+    if: ${{ needs.get-vars.outputs.tagPrefix == 'images' && contains(fromJson(needs.get-vars.outputs.allImages), needs.get-vars.outputs.publishImageShortName) }}
+    needs: [get-vars]
+    name: "[${{ needs.get-vars.outputs.publishImageShortName }}] publish image"
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/image-build-publish.yaml
+    with:
+      registry: ${{ needs.get-vars.outputs.registry }}
+      shortName: ${{ needs.get-vars.outputs.publishImageShortName }}
+      publishVersion: ${{ needs.get-vars.outputs.publishImageVersion }}
+      publish: true
