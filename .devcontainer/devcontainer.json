@@ -1,7 +1,9 @@
 {
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
   "features": {
-    "ghcr.io/harrhp/devcontainer-features/common:1": {}
+    "ghcr.io/harrhp/devcontainer-features/common:1": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers-contrib/features/dive:1": {}
   },
   "customizations": {
     "vscode": {}
